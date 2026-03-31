@@ -40,7 +40,7 @@ graph TB
 stateDiagram-v2
     [*] --> Default : Normal startup
     [*] --> Auto : TRANSCRIPT_CLASSIFIER enabled
-    [*] --> BypassPermissions : --bypass-permissions flag
+    [*] --> BypassPermissions : bypass permissions flag
 
     Default --> Plan : /plan command
     Plan --> Default : ExitPlanMode
@@ -51,37 +51,37 @@ stateDiagram-v2
     DontAsk --> Default : User switches back
 
     state Default {
-        [*] --> CheckRules
-        CheckRules --> AskUser : No matching rule
-        CheckRules --> Allow : alwaysAllow match
-        CheckRules --> Deny : alwaysDeny match
-        AskUser --> Allow : User approves
-        AskUser --> Deny : User rejects
+        [*] --> D_CheckRules
+        D_CheckRules --> D_Allow : alwaysAllow match
+        D_CheckRules --> D_Deny : alwaysDeny match
+        D_CheckRules --> D_AskUser : No matching rule
+        D_AskUser --> D_Allow : User approves
+        D_AskUser --> D_Deny : User rejects
     }
 
     state Auto {
-        [*] --> ClassifierCheck
-        ClassifierCheck --> Allow : Classified safe
-        ClassifierCheck --> AskUser2 : Uncertain
-        AskUser2 --> Allow : User approves
-        AskUser2 --> Deny : User rejects
+        [*] --> A_ClassifierCheck
+        A_ClassifierCheck --> A_Allow : Classified safe
+        A_ClassifierCheck --> A_AskUser : Uncertain
+        A_AskUser --> A_Allow : User approves
+        A_AskUser --> A_Deny : User rejects
     }
 
     state BypassPermissions {
-        [*] --> AllowAll : All tools auto-approved
+        [*] --> BP_AllowAll : All tools auto approved
     }
 
     state Plan {
-        [*] --> PlanRestrictions : Read-only tools only
+        [*] --> P_ReadOnly : Read only tools only
     }
 
     state AcceptEdits {
-        [*] --> AutoEdits : File edits auto-approved
-        AutoEdits --> AskOther : Non-edit tools prompt
+        [*] --> AE_AutoEdits : File edits auto approved
+        AE_AutoEdits --> AE_AskOther : Non edit tools prompt
     }
 
     state DontAsk {
-        [*] --> DenyUnknown : Deny unless explicitly allowed
+        [*] --> DA_DenyUnknown : Deny unless explicitly allowed
     }
 ```
 

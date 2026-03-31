@@ -103,7 +103,7 @@ flowchart TD
     subgraph "Prompt Priority"
         Override{"Override<br/>system prompt?"}
         Override -->|yes| UseOverride["Use override<br/>(loop mode)"]
-        Override -->|no| CoordCheck{"Coordinator mode<br/>& no agent?"}
+        Override -->|no| CoordCheck{"Coordinator mode<br/>and no agent?"}
         CoordCheck -->|yes| UseCoord["Use coordinator prompt"]
         CoordCheck -->|no| AgentCheck{"Agent defined?"}
         AgentCheck -->|yes| ProactiveCheck{"Proactive mode?"}

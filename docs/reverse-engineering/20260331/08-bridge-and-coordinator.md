@@ -127,26 +127,23 @@ classDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Scheduled : schedule(sessionId, jwt)
+    [*] --> Scheduled : schedule sessionId jwt
 
-    Scheduled --> Waiting : Set timer (exp - 5min)
+    Scheduled --> Waiting : Set timer at exp minus 5min
     Waiting --> Refreshing : Timer fires
 
-    Refreshing --> Delivered : getAccessToken() succeeds
-    Refreshing --> RetryWait : getAccessToken() fails
+    Refreshing --> Delivered : getAccessToken succeeds
+    Refreshing --> RetryWait : getAccessToken fails
 
-    RetryWait --> Refreshing : Retry (max 3)
+    RetryWait --> Refreshing : Retry max 3
     RetryWait --> Failed : 3 consecutive failures
 
-    Delivered --> Scheduled : onRefresh(sessionId, newToken)
+    Delivered --> Scheduled : onRefresh with new token
 
-    state "Generation Guard" as Gen {
-        note : Generation counter invalidates<br/>in-flight refreshes after cancel()
-    }
-
-    [*] --> Cancelled : cancel(sessionId)
-    Waiting --> Cancelled
+    Waiting --> Cancelled : cancel called
     Refreshing --> Cancelled : Generation mismatch
+
+    note right of Cancelled : Generation counter invalidates\nin flight refreshes after cancel
 ```
 
 ### Bridge Transport Versions

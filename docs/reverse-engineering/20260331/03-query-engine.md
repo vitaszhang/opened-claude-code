@@ -184,10 +184,10 @@ stateDiagram-v2
 
     state PartitionTools {
         [*] --> ClassifyTool
-        ClassifyTool --> ReadOnlyBatch : isConcurrencySafe && isReadOnly
-        ClassifyTool --> WriteBatch : !isReadOnly
-        ReadOnlyBatch --> ConcurrentExec : Max 10 parallel
-        WriteBatch --> SerialExec : One at a time
+        ClassifyTool --> ReadOnlyBatch : concurrency safe and read only
+        ClassifyTool --> WriteBatch : not read only
+        ReadOnlyBatch --> ConcurrentExec : max 10 parallel
+        WriteBatch --> SerialExec : one at a time
     }
 
     PartitionTools --> CollectResults : All tools complete
@@ -195,10 +195,10 @@ stateDiagram-v2
     ApplyBudget --> AppendResults : Budget applied
     AppendResults --> PreProcess : Continue loop
 
-    HandleError --> MaxOutputRecovery : max_output_tokens
-    HandleError --> ReactiveCompact : prompt_too_long
-    HandleError --> RetryWithBackoff : Transient (429, 529)
-    HandleError --> FatalError : Non-retryable
+    HandleError --> MaxOutputRecovery : max output tokens
+    HandleError --> ReactiveCompact : prompt too long
+    HandleError --> RetryWithBackoff : Transient 429 or 529
+    HandleError --> FatalError : Non retryable
 
     MaxOutputRecovery --> PreProcess : Retry with budget override
     ReactiveCompact --> PreProcess : After compaction
@@ -206,9 +206,6 @@ stateDiagram-v2
 
     BuildResult --> [*] : Return Terminal
     FatalError --> [*] : Return error result
-
-    note right of PreProcess : Each iteration:<br/>- Snip history<br/>- Microcompact<br/>- Context collapse
-    note right of ExecuteTools : Concurrency model:<br/>- Reads: parallel (max 10)<br/>- Writes: serial
 ```
 
 ## Retry Logic

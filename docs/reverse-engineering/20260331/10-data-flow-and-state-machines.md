@@ -6,11 +6,11 @@
 
 ```mermaid
 sequenceDiagram
-    participant User as User (Terminal)
+    participant User as User
     participant Ink as Ink Renderer
     participant REPL as REPL Component
     participant QE as QueryEngine
-    participant Query as query.ts Loop
+    participant Query as Query Loop
     participant API as Claude API
     participant Tools as Tool Executor
     participant State as AppState
@@ -20,27 +20,26 @@ sequenceDiagram
     REPL->>REPL: Buffer input in PromptInput
 
     User->>REPL: Press Enter
-    REPL->>REPL: Parse input (command or prompt)
+    REPL->>REPL: Parse input
 
     alt Slash Command
-        REPL->>REPL: findCommand(name)
-        REPL->>REPL: Dispatch by type (local/jsx/prompt)
+        REPL->>REPL: Find and dispatch command
     else User Prompt
-        REPL->>QE: submitMessage(prompt)
-        QE->>QE: processUserInput(prompt)
-        Note over QE: Handle attachments,<br/>CLAUDE.md, memory files
+        REPL->>QE: submitMessage
+        QE->>QE: processUserInput
+        Note over QE: Handle attachments and memory files
 
-        QE->>State: Update messages[]
+        QE->>State: Update messages
         QE-->>REPL: yield system_init
 
-        QE->>Query: query(messages)
+        QE->>Query: start query
 
         loop Agentic Loop
-            Query->>Query: Pre-process (compact, snip)
-            Query->>API: queryModelWithStreaming()
+            Query->>Query: Pre-process context
+            Query->>API: queryModelWithStreaming
 
             loop Streaming
-                API-->>Query: content_block_delta (text)
+                API-->>Query: content_block_delta
                 Query-->>QE: yield stream_event
                 QE-->>REPL: yield stream_event
                 REPL->>Ink: Update AssistantTextMessage
@@ -50,25 +49,25 @@ sequenceDiagram
             API-->>Query: message_stop
 
             alt Tool calls present
-                Query->>Tools: runTools(toolUseBlocks)
+                Query->>Tools: runTools
 
                 loop Per Tool
                     Tools->>Tools: Schema validation
                     Tools->>Tools: Permission check
-                    Tools->>Tools: tool.call()
+                    Tools->>Tools: Execute tool
                     Tools-->>REPL: Progress updates
                     REPL->>Ink: Update tool progress UI
                 end
 
                 Tools-->>Query: Tool results
-                Query->>Query: Append results, continue loop
-            else end_turn
+                Query->>Query: Append results and continue
+            else End turn
                 Query-->>QE: Terminal result
             end
         end
 
         QE-->>REPL: yield result message
-        REPL->>State: Update usage, messages
+        REPL->>State: Update usage and messages
         REPL->>Ink: Render final state
         Ink->>User: Display response
     end
@@ -78,19 +77,19 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant Query as query.ts
+    participant Query as Query Loop
     participant Retry as withRetry
     participant API as Claude API
     participant Compact as Compaction
     participant User as User
 
-    Query->>API: queryModelWithStreaming()
+    Query->>API: queryModelWithStreaming
     API-->>Retry: 429 Too Many Requests
 
-    alt Short retry-after (< 2s)
-        Retry->>Retry: Sleep(retry-after)
+    alt Short retry after
+        Retry->>Retry: Sleep then retry
         Retry->>API: Retry same model
-    else Long retry-after
+    else Long retry after
         Retry->>Retry: Enter fast-mode cooldown
         Retry->>API: Retry with fallback model
     end
@@ -99,15 +98,15 @@ sequenceDiagram
     Retry-->>Query: yield SystemAPIErrorMessage
     Query-->>User: Show retry indicator
 
-    Retry->>API: Retry attempt 2/10
-    API-->>Query: Success (stream begins)
+    Retry->>API: Retry attempt 2 of 10
+    API-->>Query: Success and stream begins
 
-    Note over Query: Later in conversation...
+    Note over Query: Later in conversation
 
-    Query->>API: queryModelWithStreaming()
-    API-->>Query: Error: prompt_too_long
+    Query->>API: queryModelWithStreaming
+    API-->>Query: Error prompt_too_long
 
-    Query->>Compact: reactiveCompact()
+    Query->>Compact: reactiveCompact
     Compact->>Compact: Summarize old messages
     Compact-->>Query: Compacted conversation
 
@@ -119,431 +118,312 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Initializing : CLI invoked
+    [*] --> FastPathCheck : CLI invoked
 
-    state Initializing {
-        [*] --> FastPathCheck
-        FastPathCheck --> FastPathExit : Fast-path match
-        FastPathCheck --> FullLoad : No fast-path
-        FullLoad --> PreAction : Modules loaded
-        PreAction --> Init : preAction hook
-        Init --> SetupScreens : init() complete
-        SetupScreens --> ToolLoad : Trust + auth done
-        ToolLoad --> Ready : Tools + MCP loaded
-    }
+    FastPathCheck --> FastPathExit : Fast path match
+    FastPathCheck --> FullLoad : No fast path
 
     FastPathExit --> [*] : Output and exit
 
-    Ready --> Interactive : launchRepl()
-    Ready --> Headless : -p flag
+    FullLoad --> PreAction : Modules loaded
+    PreAction --> InitPhase : preAction hook
+    InitPhase --> SetupScreens : init complete
+    SetupScreens --> ToolLoad : Trust and auth done
+    ToolLoad --> Ready : Tools and MCP loaded
+
+    Ready --> Interactive : launchRepl
+    Ready --> Headless : print flag
 
     state Interactive {
         [*] --> WaitingForInput
-
         WaitingForInput --> ProcessingInput : User submits
-        ProcessingInput --> QueryLoop : Start query
-
-        state QueryLoop {
-            [*] --> PreProcess
-            PreProcess --> APICall
-            APICall --> Streaming
-            Streaming --> ToolExecution : tool_use
-            Streaming --> ResponseComplete : end_turn
-            ToolExecution --> PreProcess : results appended
-        }
-
-        ResponseComplete --> WaitingForInput
-        WaitingForInput --> SlashCommand : /command
-        SlashCommand --> WaitingForInput : Command complete
-    end
+        ProcessingInput --> PreProcessCtx : Start query
+        PreProcessCtx --> CallingAPI : Context optimized
+        CallingAPI --> StreamingResp : API streaming
+        StreamingResp --> ExecTools : tool use detected
+        StreamingResp --> RespComplete : end turn
+        ExecTools --> PreProcessCtx : results appended
+        RespComplete --> WaitingForInput : Back to input
+        WaitingForInput --> RunSlashCmd : slash command
+        RunSlashCmd --> WaitingForInput : Command complete
+    }
 
     state Headless {
         [*] --> SingleQuery
-        SingleQuery --> StreamOutput
-        StreamOutput --> Complete
+        SingleQuery --> StreamOutput : Query started
+        StreamOutput --> HeadlessDone : Output complete
     }
 
-    Interactive --> Compacting : Auto-compact triggered
+    Interactive --> Compacting : Auto compact triggered
     Compacting --> Interactive : Compaction complete
 
-    Interactive --> PlanMode : /plan
+    Interactive --> PlanMode : enter plan
     PlanMode --> Interactive : ExitPlanMode
 
-    Interactive --> Backgrounding : --bg / Ctrl+Z
+    Interactive --> Backgrounding : background session
     Backgrounding --> Interactive : attach
 
-    Interactive --> GracefulShutdown : exit / Ctrl+C+D
-    Headless --> GracefulShutdown : Output complete
-    Complete --> GracefulShutdown
+    Interactive --> Shutdown : exit or Ctrl C
+    Headless --> Shutdown : Output complete
 
-    GracefulShutdown --> [*] : Cleanup done
-
-    state GracefulShutdown {
+    state Shutdown {
         [*] --> FlushTelemetry
         FlushTelemetry --> ShutdownLSP
         ShutdownLSP --> CleanupTeams
         CleanupTeams --> ResetCursor
-        ResetCursor --> [*]
     }
+
+    Shutdown --> [*] : Cleanup done
 ```
 
 ## Tool Execution State Machine
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Received : ToolUseBlock from API
+    [*] --> TE_Received : ToolUseBlock from API
 
-    Received --> SchemaValidation : Parse input
+    TE_Received --> TE_SchemaValidation : Parse input
 
-    SchemaValidation --> SchemaFailed : Invalid input
-    SchemaValidation --> InputValidation : Schema valid
+    TE_SchemaValidation --> TE_SchemaFailed : Invalid input
+    TE_SchemaValidation --> TE_InputValidation : Schema valid
 
-    SchemaFailed --> ErrorResult : Return error
+    TE_SchemaFailed --> TE_ErrorResult : Return error
 
-    InputValidation --> ValidationFailed : validateInput() fails
-    InputValidation --> PermissionCheck : Input valid
+    TE_InputValidation --> TE_ValidationFailed : Validation fails
+    TE_InputValidation --> TE_PermissionCheck : Input valid
 
-    ValidationFailed --> ErrorResult : Return error
+    TE_ValidationFailed --> TE_ErrorResult : Return error
 
-    PermissionCheck --> Checking : canUseTool()
+    TE_PermissionCheck --> TE_CheckDenyRules : canUseTool called
+    TE_CheckDenyRules --> TE_Denied : Deny rule match
+    TE_CheckDenyRules --> TE_ToolSpecific : No deny match
+    TE_ToolSpecific --> TE_Denied : Tool denies
+    TE_ToolSpecific --> TE_HookCheck : Tool allows
+    TE_HookCheck --> TE_Denied : Hook denies
+    TE_HookCheck --> TE_RuleCheck : Hooks pass
+    TE_RuleCheck --> TE_Allowed : Allow rule match
+    TE_RuleCheck --> TE_Denied : Deny rule match
+    TE_RuleCheck --> TE_ModeCheck : No rule match
+    TE_ModeCheck --> TE_UserPrompt : Default mode
+    TE_ModeCheck --> TE_Allowed : Bypass mode
+    TE_ModeCheck --> TE_ClassifierCheck : Auto mode
+    TE_ClassifierCheck --> TE_Allowed : Safe
+    TE_ClassifierCheck --> TE_UserPrompt : Uncertain
+    TE_UserPrompt --> TE_Allowed : User approves
+    TE_UserPrompt --> TE_Denied : User rejects
 
-    state Checking {
-        [*] --> DenyRules
-        DenyRules --> ToolSpecific : No deny match
-        DenyRules --> Denied : Deny rule match
-        ToolSpecific --> HookCheck : Tool allows
-        ToolSpecific --> Denied : Tool denies
-        HookCheck --> RuleCheck : Hooks pass
-        HookCheck --> Denied : Hook denies
-        RuleCheck --> ModeCheck : No rule match
-        RuleCheck --> Allowed : Allow rule match
-        RuleCheck --> Denied : Deny rule match
-        ModeCheck --> UserPrompt : Default mode
-        ModeCheck --> Allowed : Bypass mode
-        ModeCheck --> ClassifierCheck : Auto mode
-        ClassifierCheck --> Allowed : Safe
-        ClassifierCheck --> UserPrompt : Uncertain
-        UserPrompt --> Allowed : User approves
-        UserPrompt --> Denied : User rejects
-    end
+    TE_Denied --> TE_RejectedResult : Return rejection
 
-    Denied --> RejectedResult : Return rejection
+    TE_Allowed --> TE_Running : Execute tool
+    TE_Running --> TE_Progress : onProgress callback
+    TE_Progress --> TE_Running : Continue
+    TE_Running --> TE_Success : Completed
+    TE_Running --> TE_Failed : Error
 
-    Allowed --> Executing : tool.call()
+    TE_Success --> TE_ProcessResult : Map to result block
+    TE_Failed --> TE_ErrorResult : Return error
 
-    state Executing {
-        [*] --> Running
-        Running --> Progress : onProgress callback
-        Progress --> Running
-        Running --> Success : Completed
-        Running --> Failed : Error
-    }
+    TE_ProcessResult --> TE_ApplyBudget : Check result size
+    TE_ApplyBudget --> TE_ApplyContextMod : Apply contextModifier
+    TE_ApplyContextMod --> [*] : Return result
 
-    Success --> ProcessResult : Map to ToolResultBlockParam
-    Failed --> ErrorResult
-
-    ProcessResult --> ApplyBudget : Check result size
-    ApplyBudget --> ApplyContextMod : Apply contextModifier
-    ApplyContextMod --> [*] : Return result
-
-    ErrorResult --> [*] : Return error
-    RejectedResult --> [*] : Return rejection
+    TE_ErrorResult --> [*] : Return error
+    TE_RejectedResult --> [*] : Return rejection
 ```
 
 ## Permission Decision State Machine
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Evaluating : Tool invocation
+    [*] --> PD_Evaluating : Tool invocation
 
-    Evaluating --> DenyRuleCheck
+    PD_Evaluating --> PD_ScanDenyRules : Start evaluation
+    PD_ScanDenyRules --> PD_Denied : Deny rule matches
+    PD_ScanDenyRules --> PD_Validate : No deny rule
 
-    state DenyRuleCheck {
-        [*] --> ScanRules
-        ScanRules --> RuleMatched : Deny rule matches
-        ScanRules --> NoMatch : No deny rule
-    }
+    PD_Validate --> PD_Denied : Input invalid
+    PD_Validate --> PD_ToolCheck : Input valid
 
-    RuleMatched --> Denied
+    PD_ToolCheck --> PD_Allowed : Tool allows
+    PD_ToolCheck --> PD_Denied : Tool denies
+    PD_ToolCheck --> PD_RunHooks : Tool asks
 
-    NoMatch --> InputValidation2
+    PD_RunHooks --> PD_Allowed : Hook allows
+    PD_RunHooks --> PD_Denied : Hook denies
+    PD_RunHooks --> PD_MatchRules : No hook match
 
-    state InputValidation2 {
-        [*] --> Validate
-        Validate --> Valid
-        Validate --> Invalid
-    }
+    PD_MatchRules --> PD_Allowed : alwaysAllow rule
+    PD_MatchRules --> PD_Denied : alwaysDeny rule
+    PD_MatchRules --> PD_ShowDialog : alwaysAsk rule
+    PD_MatchRules --> PD_CheckMode : No rule match
 
-    Invalid --> Denied
+    PD_CheckMode --> PD_ShowDialog : Default mode
+    PD_CheckMode --> PD_Allowed : Bypass mode
+    PD_CheckMode --> PD_EditCheck : AcceptEdits mode
+    PD_CheckMode --> PD_Denied : DontAsk mode
+    PD_CheckMode --> PD_RunClassifier : Auto mode
 
-    Valid --> ToolPermissionCheck
+    PD_EditCheck --> PD_Allowed : Is file edit
+    PD_EditCheck --> PD_ShowDialog : Not file edit
 
-    state ToolPermissionCheck {
-        [*] --> ToolCheck
-        ToolCheck --> ToolAllows : behavior: allow
-        ToolCheck --> ToolDenies : behavior: deny
-        ToolCheck --> ToolAsks : behavior: ask
-    }
+    PD_RunClassifier --> PD_Allowed : Classified safe
+    PD_RunClassifier --> PD_ShowDialog : Uncertain
 
-    ToolDenies --> Denied
-    ToolAllows --> Allowed
+    PD_ShowDialog --> PD_Racing : Display dialog
 
-    ToolAsks --> HookExecution
+    PD_Racing --> PD_Allowed : Hook wins race
+    PD_Racing --> PD_Allowed : Classifier wins race
+    PD_Racing --> PD_Allowed : Bridge wins race
+    PD_Racing --> PD_Allowed : Channel wins race
+    PD_Racing --> PD_UserAllows : User approves
+    PD_Racing --> PD_UserDenies : User rejects
+    PD_Racing --> PD_Denied : Abort signal
 
-    state HookExecution {
-        [*] --> RunHooks
-        RunHooks --> HookResolves : Hook decides
-        RunHooks --> HookPassthrough : No hook match
-    }
+    PD_UserAllows --> PD_PersistCheck : Check persistence
+    PD_PersistCheck --> PD_Allowed : Write rule to disk
+    PD_UserDenies --> PD_Denied : Rejection recorded
 
-    HookResolves --> Allowed : Hook allows
-    HookResolves --> Denied : Hook denies
-
-    HookPassthrough --> RuleMatching
-
-    state RuleMatching {
-        [*] --> MatchRules
-        MatchRules --> AllowRule : alwaysAllow
-        MatchRules --> DenyRule : alwaysDeny
-        MatchRules --> AskRule : alwaysAsk
-        MatchRules --> NoRule : No match
-    }
-
-    AllowRule --> Allowed
-    DenyRule --> Denied
-    AskRule --> InteractiveDecision
-
-    NoRule --> ModeBasedDecision
-
-    state ModeBasedDecision {
-        [*] --> CheckMode
-        CheckMode --> InteractiveDecision : default
-        CheckMode --> Allowed : bypassPermissions
-        CheckMode --> EditCheck : acceptEdits
-        CheckMode --> Denied : dontAsk
-        CheckMode --> ClassifierDecision : auto
-    }
-
-    EditCheck --> Allowed : Is file edit
-    EditCheck --> InteractiveDecision : Not file edit
-
-    state ClassifierDecision {
-        [*] --> RunClassifier
-        RunClassifier --> Allowed : Classified safe
-        RunClassifier --> InteractiveDecision : Uncertain
-    }
-
-    state InteractiveDecision {
-        [*] --> ShowDialog
-        ShowDialog --> Racing
-
-        state Racing {
-            [*] --> WaitForFirst
-            WaitForFirst --> HookWins : Hook resolves
-            WaitForFirst --> ClassifierWins : Classifier resolves
-            WaitForFirst --> BridgeWins : Bridge resolves
-            WaitForFirst --> ChannelWins : Channel resolves
-            WaitForFirst --> UserWins : User responds
-            WaitForFirst --> AbortWins : Abort signal
-        }
-
-        HookWins --> Allowed
-        ClassifierWins --> Allowed
-        BridgeWins --> Allowed
-        ChannelWins --> Allowed
-
-        UserWins --> UserAllows : Allow (once/always)
-        UserWins --> UserDenies : Reject
-
-        AbortWins --> Denied
-    end
-
-    UserAllows --> PersistCheck
-    PersistCheck --> Allowed : Allow always → write to disk
-    PersistCheck --> Allowed : Allow once → session only
-
-    UserDenies --> Denied
-
-    Allowed --> [*] : Execute tool
-    Denied --> [*] : Skip tool
+    PD_Allowed --> [*] : Execute tool
+    PD_Denied --> [*] : Skip tool
 ```
 
 ## MCP Connection State Machine
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Discovered : Config loaded
+    [*] --> MC_Discovered : Config loaded
 
-    Discovered --> Connecting : initialize()
+    MC_Discovered --> MC_Connecting : Initialize
 
-    Connecting --> TransportSetup
+    MC_Connecting --> MC_CreateTransport : Select transport type
+    MC_CreateTransport --> MC_StdioTransport : stdio
+    MC_CreateTransport --> MC_SSETransport : sse
+    MC_CreateTransport --> MC_HTTPTransport : http
+    MC_CreateTransport --> MC_WSTransport : ws
+    MC_CreateTransport --> MC_SDKTransport : sdk
 
-    state TransportSetup {
-        [*] --> CreateTransport
-        CreateTransport --> StdioTransport : type: stdio
-        CreateTransport --> SSETransport : type: sse
-        CreateTransport --> HTTPTransport : type: http
-        CreateTransport --> WSTransport : type: ws
-        CreateTransport --> SDKTransport : type: sdk
-    }
+    MC_StdioTransport --> MC_Connected : Transport established
+    MC_SSETransport --> MC_Connected : Transport established
+    MC_HTTPTransport --> MC_Connected : Transport established
+    MC_WSTransport --> MC_Connected : Transport established
+    MC_SDKTransport --> MC_Connected : Transport established
 
-    TransportSetup --> Connected : Transport established
-    TransportSetup --> NeedsAuth : OAuth required
-    TransportSetup --> ConnectionFailed : Error
+    MC_Connecting --> MC_NeedsAuth : OAuth required
+    MC_Connecting --> MC_ConnFailed : Connection error
 
-    NeedsAuth --> OAuthFlow
+    MC_NeedsAuth --> MC_UserApproves : Prompt user
+    MC_UserApproves --> MC_OpenBrowser : Start OAuth
+    MC_OpenBrowser --> MC_WaitCallback : Wait for redirect
+    MC_WaitCallback --> MC_TokenExchange : Code received
+    MC_TokenExchange --> MC_Connected : Auth success
+    MC_TokenExchange --> MC_ConnFailed : Auth failure
 
-    state OAuthFlow {
-        [*] --> UserApproves
-        UserApproves --> OpenBrowser
-        OpenBrowser --> WaitForCallback
-        WaitForCallback --> TokenExchange
-        TokenExchange --> AuthSuccess
-        TokenExchange --> AuthFailure
-    }
+    MC_Connected --> MC_ToolDiscovery : List tools
+    MC_ToolDiscovery --> MC_Ready : Tools loaded
+    MC_ToolDiscovery --> MC_ConnFailed : RPC error
 
-    AuthSuccess --> Connected
-    AuthFailure --> ConnectionFailed
+    MC_Ready --> MC_ToolExec : Tool call
+    MC_ToolExec --> MC_Ready : Result returned
 
-    Connected --> ToolDiscovery : listTools()
-    ToolDiscovery --> Ready : Tools loaded
-    ToolDiscovery --> ConnectionFailed : RPC error
+    MC_Ready --> MC_Disconnected : Connection lost
+    MC_Disconnected --> MC_Backoff : Auto reconnect
 
-    Ready --> ToolExecution : Tool call
-    ToolExecution --> Ready : Result
+    MC_Backoff --> MC_RetryConnect : After delay
+    MC_RetryConnect --> MC_Connected : Reconnected
+    MC_RetryConnect --> MC_Backoff : Retry failed
+    MC_Backoff --> MC_Disabled : 5 attempts exceeded
 
-    Ready --> Disconnected : Connection lost
-    Disconnected --> Reconnecting : Auto-reconnect
-
-    state Reconnecting {
-        [*] --> Backoff
-        Backoff --> RetryConnect : After delay
-        RetryConnect --> Connected : Success
-        RetryConnect --> Backoff : Failure (count++)
-        Backoff --> MaxRetries : 5 attempts
-    }
-
-    MaxRetries --> Disabled : Give up
-
-    Ready --> Disabled : User disables
-    Disabled --> Connecting : User re-enables
-    ConnectionFailed --> Reconnecting : Retry eligible
-    ConnectionFailed --> Disabled : Non-retryable
+    MC_Ready --> MC_Disabled : User disables
+    MC_Disabled --> MC_Connecting : User re-enables
+    MC_ConnFailed --> MC_Backoff : Retry eligible
+    MC_ConnFailed --> MC_Disabled : Non retryable
 ```
 
 ## Bridge Session State Machine
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Registering : bridgeMain() called
+    [*] --> BS_Registering : bridgeMain called
 
-    Registering --> Registered : POST /environments/bridge
-    Registering --> Fatal : 401/403/404
+    BS_Registering --> BS_Registered : Register environment
+    BS_Registering --> BS_Fatal : Auth or not found error
 
-    Registered --> Polling : Start work polling
+    BS_Registered --> BS_LongPoll : Start work polling
 
-    state Polling {
-        [*] --> LongPoll
-        LongPoll --> WorkReceived : WorkResponse
-        LongPoll --> NoWork : Timeout
-        NoWork --> Backoff : Increase delay
-        Backoff --> LongPoll : After delay
-        note right of Backoff : 2s → 2m → 10m
-    }
+    BS_LongPoll --> BS_WorkReceived : WorkResponse received
+    BS_LongPoll --> BS_NoWork : Timeout
+    BS_NoWork --> BS_PollBackoff : Increase delay
+    BS_PollBackoff --> BS_LongPoll : Resume polling
 
-    WorkReceived --> Acknowledging : PATCH /work/{id}
+    BS_WorkReceived --> BS_Acknowledging : Acknowledge work
 
-    state "Session Type" as SType {
-        Acknowledging --> SessionWork : type: session
-        Acknowledging --> HealthCheck : type: healthcheck
-    }
+    BS_Acknowledging --> BS_SessionWork : Session type
+    BS_Acknowledging --> BS_HealthCheck : Healthcheck type
 
-    HealthCheck --> Polling : Respond OK
+    BS_HealthCheck --> BS_LongPoll : Respond OK
 
-    SessionWork --> DecodingJWT : Decode secret
+    BS_SessionWork --> BS_DecodingJWT : Decode secret
 
-    DecodingJWT --> WebSocketConnect : JWT valid
+    BS_DecodingJWT --> BS_WSConnecting : JWT valid
+    BS_WSConnecting --> BS_WSConnected : WebSocket established
+    BS_WSConnected --> BS_Active : Ready for messages
 
-    state WebSocketConnect {
-        [*] --> Connecting2
-        Connecting2 --> Connected2 : WS established
-        Connected2 --> Active : Ready for messages
-    }
+    BS_Active --> BS_Processing : Inbound message
+    BS_Processing --> BS_Responding : Generate response
+    BS_Responding --> BS_Active : Response sent
+    BS_Active --> BS_PermRequest : Control request
+    BS_PermRequest --> BS_Active : Response sent
 
-    state Active {
-        [*] --> Idle
-        Idle --> ProcessingMessage : Inbound message
-        ProcessingMessage --> Responding : Generate response
-        Responding --> Idle : Response sent
+    BS_Active --> BS_SessionEnd : Work completed
+    BS_Active --> BS_WSDisconnected : Connection lost
 
-        Idle --> PermissionRequest : Control request
-        PermissionRequest --> Idle : Response sent
+    BS_WSDisconnected --> BS_WSReconnecting : Auto reconnect
+    BS_WSReconnecting --> BS_Active : Reconnected
+    BS_WSReconnecting --> BS_SessionEnd : Max retries
 
-        note right of Active : Heartbeat every 30s<br/>UUID dedup active
-    }
+    BS_SessionEnd --> BS_LongPoll : Resume polling
 
-    Active --> SessionEnd : Work completed
-    Active --> Disconnected2 : Connection lost
-
-    Disconnected2 --> Reconnecting2 : Auto-reconnect
-    Reconnecting2 --> Active : Reconnected
-    Reconnecting2 --> SessionEnd : Max retries
-
-    SessionEnd --> Polling : Resume polling
-
-    Fatal --> [*] : Exit with error
+    BS_Fatal --> [*] : Exit with error
 ```
 
 ## Context Compaction State Machine
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Monitoring : Token usage tracking
+    [*] --> CC_BelowThreshold : Token usage tracking
 
-    state Monitoring {
-        [*] --> BelowThreshold
-        BelowThreshold --> Warning : usage > warning_threshold
-        Warning --> Critical : usage > error_threshold
-        Critical --> TriggerCompact : usage ≥ auto_compact_threshold
-    }
+    CC_BelowThreshold --> CC_Warning : Usage exceeds warning threshold
+    CC_Warning --> CC_Critical : Usage exceeds error threshold
+    CC_Critical --> CC_TriggerCompact : Usage exceeds compact threshold
 
-    TriggerCompact --> CircuitBreakerCheck
+    CC_TriggerCompact --> CC_CheckFailures : Check circuit breaker
+    CC_CheckFailures --> CC_SelectStrategy : Fewer than 3 failures
+    CC_CheckFailures --> CC_Disabled : 3 or more failures
 
-    state CircuitBreakerCheck {
-        [*] --> CheckFailures
-        CheckFailures --> Proceed : failures < 3
-        CheckFailures --> Disabled : failures ≥ 3
-    }
+    CC_Disabled --> [*] : Stop monitoring
 
-    Disabled --> [*] : Stop monitoring
+    CC_SelectStrategy --> CC_AutoCompact : Token threshold trigger
+    CC_SelectStrategy --> CC_ReactiveCompact : Prompt too long recovery
+    CC_SelectStrategy --> CC_MicroCompact : Token conservative mode
+    CC_SelectStrategy --> CC_SnipCompact : Targeted segments
 
-    Proceed --> SelectStrategy
+    CC_AutoCompact --> CC_GroupMessages : Begin compaction
+    CC_ReactiveCompact --> CC_GroupMessages : Begin compaction
+    CC_MicroCompact --> CC_GroupMessages : Begin compaction
+    CC_SnipCompact --> CC_GroupMessages : Begin compaction
 
-    state SelectStrategy {
-        [*] --> ChooseStrategy
-        ChooseStrategy --> AutoCompact : Token threshold
-        ChooseStrategy --> ReactiveCompact : prompt_too_long error
-        ChooseStrategy --> MicroCompact : Token-conservative
-        ChooseStrategy --> SnipCompact : Targeted segments
-    }
+    CC_GroupMessages --> CC_BuildPrompt : Messages grouped
+    CC_BuildPrompt --> CC_CallAPI : Prompt ready
+    CC_CallAPI --> CC_Success : Summary generated
+    CC_CallAPI --> CC_Failure : API error
 
-    SelectStrategy --> Compacting
+    CC_Success --> CC_InsertBoundary : Insert compact boundary
+    CC_InsertBoundary --> CC_DiscardOld : Remove old messages
+    CC_DiscardOld --> CC_Cleanup : Post compact cleanup
+    CC_Cleanup --> CC_BelowThreshold : Reset counters
 
-    state Compacting {
-        [*] --> GroupMessages
-        GroupMessages --> BuildPrompt
-        BuildPrompt --> CallAPI
-        CallAPI --> Success : Summary generated
-        CallAPI --> Failure : API error
-    }
-
-    Success --> InsertBoundary : compact_boundary message
-    InsertBoundary --> DiscardOld : Remove old messages
-    DiscardOld --> Cleanup : postCompactCleanup()
-    Cleanup --> Monitoring : Reset counters
-
-    Failure --> IncrementFailures : failures++
-    IncrementFailures --> Monitoring : Try again later
+    CC_Failure --> CC_IncrementFailures : Increment failure count
+    CC_IncrementFailures --> CC_BelowThreshold : Try again later
 ```
 
 ## Complete Module Interaction Map
@@ -551,28 +431,28 @@ stateDiagram-v2
 ```mermaid
 graph TB
     subgraph "User Interaction"
-        Terminal["Terminal I/O"]
+        Terminal["Terminal IO"]
         IDE["IDE Extension"]
         WebApp["claude.ai"]
-        SDK_API["SDK API"]
+        SDKAPI["SDK API"]
     end
 
-    subgraph "Entry & Routing"
-        CLI["cli.tsx"]
-        Main["main.tsx"]
-        Bridge["bridge/"]
+    subgraph "Entry and Routing"
+        CLIEntry["cli.tsx"]
+        MainEntry["main.tsx"]
+        BridgeEntry["bridge/"]
     end
 
     subgraph "Core Loop"
-        QE["QueryEngine"]
-        Query["query.ts"]
+        QEngine["QueryEngine"]
+        QueryLoop["query.ts"]
         ToolOrch["toolOrchestration"]
     end
 
     subgraph "AI Provider"
         APIClient["api/client.ts"]
-        Claude["api/claude.ts"]
-        Retry["api/withRetry.ts"]
+        ClaudeAPI["api/claude.ts"]
+        RetryLogic["api/withRetry.ts"]
     end
 
     subgraph "Tool Ecosystem"
@@ -586,51 +466,60 @@ graph TB
 
     subgraph "Safety"
         PermSys["Permission System"]
-        Hooks["Hook System"]
-        Classifier["Bash Classifier"]
+        HookSys["Hook System"]
+        BashClassifier["Bash Classifier"]
     end
 
-    subgraph "State & Config"
-        AppState2["AppState (Zustand)"]
+    subgraph "State and Config"
+        AppStore["AppState Zustand"]
         BootState["bootstrap/state.ts"]
-        Settings["Settings System"]
-        ClaudeMD["CLAUDE.md Loader"]
+        SettingsSys["Settings System"]
+        ClaudeMDLoader["CLAUDE.md Loader"]
     end
 
     subgraph "Services"
-        MCP_Svc["MCP Service"]
-        LSP_Svc["LSP Service"]
-        OAuth_Svc["OAuth Service"]
-        Compact_Svc["Compact Service"]
-        Analytics_Svc["Analytics"]
+        MCPSvc["MCP Service"]
+        LSPSvc["LSP Service"]
+        OAuthSvc["OAuth Service"]
+        CompactSvc["Compact Service"]
+        AnalyticsSvc["Analytics"]
     end
 
     subgraph "UI"
-        REPL2["REPL"]
-        Components4["Components"]
-        InkRender["Ink Renderer"]
+        REPLComp["REPL"]
+        UIComponents["Components"]
+        InkRenderer["Ink Renderer"]
     end
 
-    Terminal --> CLI --> Main --> REPL2
-    IDE --> Bridge --> QE
-    WebApp --> Bridge
-    SDK_API --> QE
+    Terminal --> CLIEntry --> MainEntry --> REPLComp
+    IDE --> BridgeEntry --> QEngine
+    WebApp --> BridgeEntry
+    SDKAPI --> QEngine
 
-    REPL2 --> QE --> Query
-    Query --> Claude --> APIClient --> Retry
-    Query --> ToolOrch --> ToolReg
+    REPLComp --> QEngine --> QueryLoop
+    QueryLoop --> ClaudeAPI --> APIClient --> RetryLogic
+    QueryLoop --> ToolOrch --> ToolReg
 
-    ToolReg --> BashT & FileT & AgentT & MCPT & SkillT
+    ToolReg --> BashT
+    ToolReg --> FileT
+    ToolReg --> AgentT
+    ToolReg --> MCPT
+    ToolReg --> SkillT
     ToolOrch --> PermSys
-    PermSys --> Hooks & Classifier
+    PermSys --> HookSys
+    PermSys --> BashClassifier
 
-    REPL2 --> AppState2
-    Main --> BootState & Settings & ClaudeMD
-    QE --> Compact_Svc
-    MCPT --> MCP_Svc
-    Main --> LSP_Svc & OAuth_Svc & Analytics_Svc
+    REPLComp --> AppStore
+    MainEntry --> BootState
+    MainEntry --> SettingsSys
+    MainEntry --> ClaudeMDLoader
+    QEngine --> CompactSvc
+    MCPT --> MCPSvc
+    MainEntry --> LSPSvc
+    MainEntry --> OAuthSvc
+    MainEntry --> AnalyticsSvc
 
-    REPL2 --> Components4 --> InkRender --> Terminal
+    REPLComp --> UIComponents --> InkRenderer --> Terminal
 
-    AgentT -.->|spawns| QE
+    AgentT -.-> QEngine
 ```
