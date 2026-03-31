@@ -4,6 +4,11 @@ A buildable reconstruction of Anthropic's **Claude Code** CLI, based on the Type
 
 The original snapshot contained only `src/` — no `package.json`, no build config, no dependencies. This repository reconstructs the full development environment so the code can be built, run, and studied.
 
+## ScreenShots
+
+![Main CLI UI](./images/screen-sort-001.png)
+![CLI Help](./images/ScreenShot_2026-03-31_141415_572.png)
+
 ## Quick Start
 
 ```bash
